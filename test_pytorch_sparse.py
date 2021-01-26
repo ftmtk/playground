@@ -60,7 +60,7 @@ def _test_sparse_matrix(densities: List[float] = [1, 0.1, 0.01],
         key = 'torch_matmul_dense'
         exec_str, setup_str = dict_exec_setup[key]
         reps, time = Timer(exec_str, setup_str).autorange()
-        period = float(time) / reps
+        period = float(time) / reps * 1e5
         exp_results[key][n]['1'] = period
         pbar.set_description(f"{key}: {n} x {n}; {1.00} done. Takes {time:.4f} with {reps} reps")
         pbar.update(1)
@@ -73,7 +73,7 @@ def _test_sparse_matrix(densities: List[float] = [1, 0.1, 0.01],
                     continue
 
                 reps, time = Timer(exec_str, setup_str).autorange()
-                period = float(time) / reps
+                period = float(time) / reps * 1e5
 
                 exp_results[key][n][str(density)] = period
                 pbar.set_description(f"{key}: {n} x {n}; {density} done. Takes {time:.4f} with {reps} reps")
@@ -92,9 +92,9 @@ if __name__ == "__main__":
         tag = f'{torch.cuda.get_device_name()}' if use_cuda and torch.cuda.is_available() else 'cpu'
         print('=' * 8 + f'{tag}' + '=' * 8)
 
-        # densities = [1, 0.5, 0.1, 0.05, 0.025, 0.015, 0.01, 0.005, 0.001, 1e-4, 1e-5]
-        densities = [1, 0.1, 0.01]
-        sizes = [128, 1024, 8192]
+        densities = [1, 0.5, 0.1, 0.05, 0.025, 0.015, 0.01, 0.005, 0.001, 1e-4]
+        # densities = [1, 0.1, 0.01]
+        sizes = [128, 1024, 4096, 8192]
         exp_results, result = _test_sparse_matrix(densities, sizes, use_cuda)
 
         dfs = {key: pd.DataFrame.from_dict(dic) for key, dic in exp_results.items()}
@@ -103,7 +103,7 @@ if __name__ == "__main__":
             print(f'======== {key}')
             print(df.to_string())
 
-            df.to_csv(f"{key}_{tag}_n{n_itrs}.csv")
+            df.to_csv(f"{key}_{tag}.csv")
             if key != 'torch_matmul_dense':
                 dfs_comp[key].to_csv(f'Comp_{key}_vs_torch_matmul_{tag}.csv')
                 print(f"." * 16 + " faster than torch_matmul_dense by")
