@@ -115,7 +115,7 @@ sparse_fixeddensity_12p5_times = sparse_fixeddensity_12p5()
 sparse_fixedsize64_times = sparse_fixedsizes(64)
 sparse_fixedsize256_times = sparse_fixedsizes(256)
 sparse_fixedsize1024_times = sparse_fixedsizes(1024)
-sparse_fixedsize4096_times = sparse_fixedsizes(4096)
+sparse_fixedsize4096_times = sparse_fixednnsizes(4096)
 np.savez_compressed('times.npz',
                     dense_times=dense_times,
                     sparse_diagonal_times=sparse_diagonal_times,
