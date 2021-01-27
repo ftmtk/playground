@@ -184,7 +184,7 @@ if __name__ == "__main__":
         exp_results = _test_sparse_matrix_gpu(densities, sizes)
         """
         exp_results, result = _test_sparse_matrix(densities, sizes, use_cuda)
-
+        torch.tensor
         dfs = {key: pd.DataFrame.from_dict(dic) for key, dic in exp_results.items()}
         dfs_comp = {key: pd.DataFrame.from_dict(dic) for key, dic in result.items()}
         for key, df in dfs.items():
