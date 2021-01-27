@@ -3,56 +3,67 @@ import numpy as np
 import pandas as pd
 from timeit import Timer
 from collections import defaultdict
-
 from typing import List
 from tqdm import tqdm
-
+import json
 import time
 
 
-def _get_adjacent_matrix_rand(density: float = 0.1, nrows: int = 2048, ncols: int = 2048, dtype: torch.dtype = torch.int32):
-    nedges = int(np.ceil(density * nrows * ncols))
-    # Initialize a new adjacent matrix
-    adjmat = np.zeros(nrows * ncols)
-    locs = np.random.choice(len(adjmat), size=nedges, replace=False)
-    adjmat[locs] = 1
+def _get_tensors(size: int, density: float):
+    device = torch.device('cuda')
+    # Create desne tensor
+    dense_tensor = torch.randn((size, size), device=device)
 
-    return torch.as_tensor(adjmat.reshape(nrows, ncols), dtype=dtype)
+    # Create sparse tensor based on given size and density
+    nnz = int(size * size * density)
+    tmp_tensor = torch.zeros(size * size, device=device)
+    tmp_tensor[:nnz] = torch.randn(nnz)
+    tmp_tensor = tmp_tensor[torch.randperm(size * size)]
+    tmp_tensor = tmp_tensor.view(size, size)
+
+    # Create sparse tensor from tensor
+    sparse_tensor = tmp_tensor.clone().detach()
+    # Create sparse_coo_tensor from tensor
+    sparse_coo_tensor_from_dense = tmp_tensor.clone().detach().to_sparse()
+    # Create sparse_coo_tensor from scratch
+    sparse_coo_tensor = torch.sparse_coo_tensor(indices=sparse_coo_tensor_from_dense._indices(),
+                                                values=sparse_coo_tensor_from_dense._values(),
+                                                size=(size, size),
+                                                dtype=torch.float32,
+                                                device=device)
+    # Create sparse_coo_tensor from scratch and coalesce
+    sparse_coo_tensor_coalesce = torch.sparse_coo_tensor(indices=sparse_coo_tensor_from_dense._indices(),
+                                                         values=sparse_coo_tensor_from_dense._values(),
+                                                         size=(size, size),
+                                                         dtype=torch.float32,
+                                                         device=device).coalesce()
+    # Create sparse_coo_tensor and convert it to tensor
+    sparse_tensor_from_sct = torch.sparse_coo_tensor(indices=sparse_coo_tensor_from_dense._indices(),
+                                                     values=sparse_coo_tensor_from_dense._values(),
+                                                     size=(size, size),
+                                                     dtype=torch.float32,
+                                                     device=device).to_dense()
+
+    return {'dense_tensor': dense_tensor,
+            'sparse_tensor': sparse_tensor,
+            'sparse_coo_tensor_from_dense': sparse_coo_tensor_from_dense,
+            'sparse_coo_tensor': sparse_coo_tensor,
+            'sparse_coo_tensor_coalesce': sparse_coo_tensor_coalesce,
+            'sparse_tensor_from_sct': sparse_tensor_from_sct}
+
+
+def _benchmark(func, t0, t1, total_time=1.0, min_reps=100):
+    reps, accu_time = 0, 0
+    while accu_time <= total_time or reps <= min_reps:
+        t_start = time.monotonic()
+        c = func(t0, t1)
+        torch.cuda.synchronize()
+        accu_time += (time.monotonic() - t_start)
+        reps += 1
+    return float(accu_time) / reps, accu_time, reps
 
 
 def _test_sparse_matrix_gpu(densities: List[float] = [1, 0.1, 0.01], sizes: List[int] = [128, 1024]):
-    def _benchmark(func, t0, t1, total_time=1.0):
-        reps, accu_time = 0, 0
-        while accu_time <= total_time:
-            t_start = time.monotonic()
-            c = func(t0, t1)
-            torch.cuda.synchronize()
-            accu_time += (time.monotonic() - t_start)
-            reps += 1
-        print(accu_time, reps)
-        return float(accu_time) / reps
-
-    def _get_tensors(size, density):
-        device = torch.device('cuda')
-        n = size
-        torch_dm = torch.randn((n, n), device=device)
-        # TODO: Matrix setting not right
-        torch_sparse_dm = torch.randn((n, n), device=device)
-        torch_sparse_dm[torch.rand_like(torch_dm) > density] = 0
-        torch_sparse_sm_to_sparse = torch_sparse_dm.to_sparse()
-        torch.cuda.empty_cache()
-        torch_sparse_sm = torch.sparse_coo_tensor(torch_sparse_sm_to_sparse._indices(),
-                                                  torch_sparse_sm_to_sparse._values(),
-                                                  size=(n, n))
-        torch_sparse_sm_coalesce = torch.sparse_coo_tensor(torch_sparse_sm_to_sparse._indices(),
-                                                           torch_sparse_sm_to_sparse._values(),
-                                                           size=(n, n)).coalesce()
-        return {'torch_dm': torch_dm,
-                'torch_sparse_dm': torch_sparse_dm,
-                'torch_sparse_sm_to_sparse': torch_sparse_sm_to_sparse,
-                'torch_sparse_sm': torch_sparse_sm,
-                'torch_sparse_sm_coalesce': torch_sparse_sm_coalesce}
-
     dict_funcs = {'torch_mm': torch.mm,
                   'torch_matmul': torch.matmul,
                   'torch_sparse_mm': torch.sparse.mm}
@@ -60,22 +71,27 @@ def _test_sparse_matrix_gpu(densities: List[float] = [1, 0.1, 0.01], sizes: List
     dict_dummy_ts = _get_tensors(2, 1)
     exp_results = {key_func: {key_t: defaultdict(dict) for key_t in dict_dummy_ts.keys()}
                    for key_func in dict_funcs.keys()}
-    # result = {key: defaultdict(defaultdict(dict)) for key in dict_funcs.keys()}
 
-    pbar = tqdm(total=len(sizes) * len(densities) * len(dict_funcs.keys()) * 4)
+    pbar = tqdm(total=len(sizes) * len(densities) * len(dict_funcs.keys()) * len(dict_dummy_ts.keys()))
     for size in sizes:
         for density in densities:
             dict_tensors = _get_tensors(size, density)
             for key_func, func in dict_funcs.items():
                 for key_t, tensor in dict_tensors.items():
-                    if key_func == 'torch_sparse_mm' and 'sparse' not in key_t:
-                        continue
-                    period = _benchmark(func, tensor, dict_tensors['torch_dm'].detach())
+                    period, accu_time, reps = _benchmark(func, tensor, dict_tensors['dense_tensor'].clone().detach())
                     exp_results[key_func][key_t][size][str(density)] = period
 
                     pbar.update(1)
-                    pbar.set_description(f'{key_func}; {key_t}; {size}; {density}; {period}')
+                    pbar.set_description(f'{key_func}; {key_t}; {size}; {density}; {period} = {accu_time}/ {reps}')
+            del dict_tensors
+            torch.cuda.empty_cache()
     pbar.close()
+
+    filename = f'test_sparse_matrix_gpu_sizes{"-".join(list(map(str,sizes)))}.json'
+    with open(filename, 'w') as f:
+        print(f'Experiment result saved in {filename}')
+        json.dump(exp_results, f, indent=2)
+
     return exp_results
 
 
@@ -160,21 +176,12 @@ if __name__ == "__main__":
 
         # densities = [1, 0.5, 0.1, 0.05, 0.025, 0.015, 0.01, 0.005, 0.001, 1e-4]
         # densities = [1, 0.1, 0.01]
-        # densities = [10**p for p in np.linspace(-4, 0, 10)]
-        # sizes = [128, 1024, 4096]
-        densities = [0.1, 0.01]
-        sizes = [8192]
-
+        densities = [10**p for p in np.linspace(-4, 0, 10)]
+        # sizes = [8192]  # [128, 1024, 4096, 8192]
+        sizes = [128, 1024, 4096]
+        # sizes = [8192]
+        # densities = [0.1, 0.01]
         exp_results = _test_sparse_matrix_gpu(densities, sizes)
-        for key_func, func_itms in exp_results.items():
-            print('=' * 8 + f' {key_func}')
-            for key_t, t_itms in func_itms.items():
-                print('.' * 16 + f' {key_t}')
-                df = pd.DataFrame.from_dict(t_itms)
-                print(df.to_string())
-
-                df.to_csv(f'Syncronize_{key_func}_{key_t}.csv')
-
         """
         exp_results, result = _test_sparse_matrix(densities, sizes, use_cuda)
 
