@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 from collections import defaultdict
-from typing import List, Dict, Callable
+from typing import List, Dict, Callable, Tuple
 from tqdm import tqdm
 import json
 import time
@@ -41,10 +41,10 @@ def _get_tensors(size: int, density: float) -> Dict[str, torch.tensor]:
                                                      size=(size, size),
                                                      dtype=torch.float32,
                                                      device=device).to_dense()
-
-    assert sparse_coo_tensor_from_dense._nnz() == nnz
-    assert sparse_coo_tensor._nnz() == nnz
-    assert sparse_coo_tensor_coalesce._nnz() == nnz
+    for nnz_sct in [sparse_coo_tensor_from_dense._nnz(),
+                    sparse_coo_tensor._nnz(),
+                    sparse_coo_tensor_coalesce._nnz()]:
+        assert abs(float(nnz) / nnz_sct - 1) < 1e-4, f"Expected nnz:{nnz}; get nnz: {nnz_sct}"
 
     return {'dense_tensor': dense_tensor,
             'sparse_tensor': sparse_tensor,
@@ -54,7 +54,8 @@ def _get_tensors(size: int, density: float) -> Dict[str, torch.tensor]:
             'sparse_tensor_from_sct': sparse_tensor_from_sct}
 
 
-def _benchmark(func: Callable, t0: torch.tensor, t1: torch.tensor, total_time: float = 1.0, min_reps: int = 100):
+def _benchmark(func: Callable, t0: torch.tensor, t1: torch.tensor,
+               total_time: float = 1.0, min_reps: int = 100) -> Tuple[float, float, float]:
     reps, accu_time = 0, 0
     while accu_time <= total_time or reps <= min_reps:
         t_start = time.monotonic()
@@ -106,5 +107,5 @@ if __name__ == "__main__":
     print('=' * 8 + f'{torch.cuda.get_device_name()}' + '=' * 8)
 
     densities = [10**p for p in np.linspace(-4, 0, 10)]
-    sizes = [128, 1024, 4096, 8192]
+    sizes = [128, 1024, 2048, 4096, 8192]
     exp_results = _test_sparse_matrix_gpu(densities, sizes)

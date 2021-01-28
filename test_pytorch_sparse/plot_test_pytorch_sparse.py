@@ -153,7 +153,7 @@ def _plot_comp_tensormethod_with_ref_across_sizes_and_tensorops(dict_results, te
 
 if __name__ == '__main__':
     dict_results = None
-    filename = 'test_sparse_matrix_gpu_sizes128-1024-4096-8192.json'
+    filename = 'test_sparse_matrix_gpu_sizes128-1024-2048-4096-8192.json'
     with open(filename, 'r') as fp:
         dict_results = json.load(fp)
 
